@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net472</TargetFramework>
+		<OutputType>WinExe</OutputType>
+		<UseWPF>true</UseWPF>
+		<UseWindowsForms>true</UseWindowsForms>
+		<AssemblyName>xScreenPen</AssemblyName>
+		<RootNamespace>xScreenPen</RootNamespace>
+		<RuntimeIdentifiers>win-x86;win-x64</RuntimeIdentifiers>
+		
+		<!-- 版本信息 -->
+		<Version>1.0.0</Version>
+		<FileVersion>1.0.0.0</FileVersion>
+		<AssemblyVersion>1.0.0.0</AssemblyVersion>
+		<Company>xScreenPen</Company>
+		<Product>xScreenPen</Product>
+		<Description>Windows 桌面端手写笔应用，支持鼠标、触控和触控笔</Description>
+		<Copyright>Copyright © 2026</Copyright>
+		
+		<!-- 应用程序图标 -->
+		<ApplicationIcon>Resources\icon.ico</ApplicationIcon>
+	</PropertyGroup>
+</Project>

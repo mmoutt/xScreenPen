@@ -1,0 +1,25 @@
+# Visual Studio files
+.vs/
+*.user
+*.suo
+*.cache
+*.userosscache
+
+# Build results
+bin/
+obj/
+[Bb]uild/
+[Dd]ebug/
+[Rr]elease/
+release/
+x64/
+x86/
+
+# NuGet packages
+packages/
+*.nupkg
+
+# Editor backup files
+*~
+*.swp
+*.bak
