@@ -9,9 +9,7 @@
 
 前往 [Releases](https://gitee.com/diao1548/x-screen-pen/releases) 页面下载最新版本：
 
-- **xScreenPen-x.x.x-Setup-x64.exe** - Windows x64 安装包（推荐）
-- **xScreenPen-x.x.x-win-x64.zip** - Windows x64 便携版
-- **xScreenPen-x.x.x-win-x86.zip** - Windows x86 便携版
+- **xScreenPen.exe**
 
 ## 功能特性
 
