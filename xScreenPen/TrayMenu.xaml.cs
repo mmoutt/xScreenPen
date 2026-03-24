@@ -57,14 +57,19 @@ namespace xScreenPen
         {
             if (Application.Current.MainWindow is MainWindow mw)
             {
-                mw.ToggleToolbarVisibilityPublic();
+                var shouldShow = !mw.IsToolbarVisible;
+                mw.SetToolbarVisibilityPublic(shouldShow);
             }
             Close();
         }
 
         private void BtnSettings_Click(object sender, RoutedEventArgs e)
         {
-            MessageBox.Show("设置功能开发中...", "xScreenPen", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (Application.Current.MainWindow is MainWindow mw)
+            {
+                mw.OpenSettingsWindow();
+            }
+
             Close();
         }
 

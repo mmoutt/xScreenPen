@@ -9,8 +9,7 @@
         Background="Transparent"
         ShowInTaskbar="False"
         Topmost="True"
-        Loaded="Window_Loaded"
-        KeyDown="Window_KeyDown">
+        Loaded="Window_Loaded">
     
     
     <Grid x:Name="MainGrid" Background="#01FFFFFF">

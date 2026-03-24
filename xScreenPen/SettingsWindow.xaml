@@ -1,0 +1,350 @@
+<Window x:Class="xScreenPen.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        mc:Ignorable="d"
+        Title="xScreenPen 设置"
+        Width="560"
+        Height="680"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        WindowStartupLocation="CenterScreen"
+        Opacity="0"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing">
+    <Window.Resources>
+        <Style x:Key="SettingsCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SettingsCardBackground}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource SettingsCardBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="16"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="Margin" Value="0,0,0,14"/>
+        </Style>
+
+        <Style x:Key="ColorPickButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="42"/>
+            <Setter Property="Height" Value="42"/>
+            <Setter Property="Margin" Value="0,0,10,10"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{StaticResource SettingsCardBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="21">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#22333333"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#2A404040"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SizeButtonStyle" TargetType="Button" BasedOn="{StaticResource SettingsRoundButtonStyle}">
+            <Setter Property="MinWidth" Value="90"/>
+            <Setter Property="Margin" Value="0,0,10,10"/>
+        </Style>
+
+        <Style x:Key="OptionRadioStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{StaticResource SettingsTitleText}"/>
+            <Setter Property="Margin" Value="0,0,18,0"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+
+        <Style x:Key="OptionCheckBoxStyle" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource SettingsTitleText}"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+
+        <Style x:Key="SlimScrollThumbStyle" TargetType="Thumb">
+            <Setter Property="Background" Value="#667A7A7A"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SlimVerticalScrollBarStyle" TargetType="ScrollBar">
+            <Setter Property="Width" Value="10"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="Transparent" Width="{TemplateBinding Width}">
+                            <Border Margin="2,0,2,0"
+                                    Background="#22111111"
+                                    BorderBrush="#33373737"
+                                    BorderThickness="1"
+                                    CornerRadius="5"/>
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsTabStop="False"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource SlimScrollThumbStyle}"/>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsTabStop="False"/>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="False">
+                                <Setter Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{StaticResource SettingsWindowBackground}"
+            BorderBrush="{StaticResource SettingsCardBorder}"
+            BorderThickness="1"
+            CornerRadius="22"
+            Padding="20">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Direction="270" Color="Black" Opacity="0.55"/>
+        </Border.Effect>
+        <Border.RenderTransform>
+            <TranslateTransform x:Name="WindowTranslate" Y="14"/>
+        </Border.RenderTransform>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Grid x:Name="TitleBar"
+                  Grid.Row="0"
+                  Margin="0,0,0,12"
+                  Background="Transparent"
+                  MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <TextBlock Text="设置"
+                           FontSize="30"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource SettingsTitleText}"/>
+            </Grid>
+
+            <ScrollViewer x:Name="ContentScrollViewer"
+                          Grid.Row="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="0,0,6,0">
+                <ScrollViewer.Resources>
+                    <Style TargetType="ScrollBar" BasedOn="{StaticResource SlimVerticalScrollBarStyle}"/>
+                </ScrollViewer.Resources>
+
+                <StackPanel>
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="绘制默认值"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource SettingsTitleText}"/>
+                            <TextBlock Text="颜色与粗细将直接同步到当前画笔"
+                                       Margin="0,4,0,0"
+                                       Foreground="{StaticResource SettingsSubText}"/>
+
+                            <TextBlock Text="颜色"
+                                       Margin="0,14,0,8"
+                                       FontSize="13"
+                                       Foreground="{StaticResource SettingsSubText}"/>
+                            <WrapPanel>
+                                <Button x:Name="BtnColorWhite" Tag="#FFFFFFFF" Style="{StaticResource ColorPickButtonStyle}" Click="ColorButton_Click">
+                                    <Ellipse Width="18" Height="18" Fill="#FFFFFFFF" Stroke="#88000000" StrokeThickness="1"/>
+                                </Button>
+                                <Button x:Name="BtnColorBlack" Tag="#FF000000" Style="{StaticResource ColorPickButtonStyle}" Click="ColorButton_Click">
+                                    <Ellipse Width="18" Height="18" Fill="#FF000000" Stroke="#80FFFFFF" StrokeThickness="1"/>
+                                </Button>
+                                <Button x:Name="BtnColorRed" Tag="#FFFF0000" Style="{StaticResource ColorPickButtonStyle}" Click="ColorButton_Click">
+                                    <Ellipse Width="18" Height="18" Fill="#FFFF0000"/>
+                                </Button>
+                                <Button x:Name="BtnColorBlue" Tag="#FF0066FF" Style="{StaticResource ColorPickButtonStyle}" Click="ColorButton_Click">
+                                    <Ellipse Width="18" Height="18" Fill="#FF0066FF"/>
+                                </Button>
+                                <Button x:Name="BtnColorGreen" Tag="#FF00CC00" Style="{StaticResource ColorPickButtonStyle}" Click="ColorButton_Click">
+                                    <Ellipse Width="18" Height="18" Fill="#FF00CC00"/>
+                                </Button>
+                                <Button x:Name="BtnColorYellow" Tag="#FFFFCC00" Style="{StaticResource ColorPickButtonStyle}" Click="ColorButton_Click">
+                                    <Ellipse Width="18" Height="18" Fill="#FFFFCC00"/>
+                                </Button>
+                            </WrapPanel>
+
+                            <TextBlock Text="粗细"
+                                       Margin="0,8,0,8"
+                                       FontSize="13"
+                                       Foreground="{StaticResource SettingsSubText}"/>
+                            <WrapPanel>
+                                <Button x:Name="BtnSizeSmall" Tag="2" Style="{StaticResource SizeButtonStyle}" Click="SizeButton_Click">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Ellipse Width="6" Height="6" Fill="White" Margin="0,0,8,0"/>
+                                        <TextBlock Text="细" Foreground="{StaticResource SettingsTitleText}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="BtnSizeMedium" Tag="4" Style="{StaticResource SizeButtonStyle}" Click="SizeButton_Click">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Ellipse Width="10" Height="10" Fill="White" Margin="0,0,8,0"/>
+                                        <TextBlock Text="中" Foreground="{StaticResource SettingsTitleText}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="BtnSizeLarge" Tag="6" Style="{StaticResource SizeButtonStyle}" Click="SizeButton_Click">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Ellipse Width="14" Height="14" Fill="White" Margin="0,0,8,0"/>
+                                        <TextBlock Text="粗" Foreground="{StaticResource SettingsTitleText}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource SettingsCardStyle}">
+                        <StackPanel>
+                            <TextBlock Text="交互行为"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource SettingsTitleText}"/>
+
+                            <TextBlock Text="启动工具"
+                                       Margin="0,14,0,8"
+                                       FontSize="13"
+                                       Foreground="{StaticResource SettingsSubText}"/>
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton x:Name="RbStartupMouse"
+                                             Content="鼠标模式"
+                                             GroupName="StartupMode"
+                                             Style="{StaticResource OptionRadioStyle}"
+                                             Checked="StartupMode_Checked"/>
+                                <RadioButton x:Name="RbStartupPen"
+                                             Content="画笔模式"
+                                             GroupName="StartupMode"
+                                             Style="{StaticResource OptionRadioStyle}"
+                                             Checked="StartupMode_Checked"/>
+                                <RadioButton x:Name="RbStartupEraser"
+                                             Content="橡皮擦模式"
+                                             GroupName="StartupMode"
+                                             Style="{StaticResource OptionRadioStyle}"
+                                             Checked="StartupMode_Checked"/>
+                            </StackPanel>
+
+                            <TextBlock Text="工具栏"
+                                       Margin="0,14,0,8"
+                                       FontSize="13"
+                                       Foreground="{StaticResource SettingsSubText}"/>
+                            <CheckBox x:Name="ChkToolbarVisible"
+                                      Content="显示悬浮工具栏"
+                                      Style="{StaticResource OptionCheckBoxStyle}"
+                                      Checked="ToolbarStateChanged"
+                                      Unchecked="ToolbarStateChanged"/>
+                            <CheckBox x:Name="ChkToolbarExpanded"
+                                      Content="默认展开主工具栏"
+                                      Style="{StaticResource OptionCheckBoxStyle}"
+                                      Checked="ToolbarStateChanged"
+                                      Unchecked="ToolbarStateChanged"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,2">
+                        <StackPanel>
+                            <TextBlock Text="关于项目"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource SettingsTitleText}"/>
+                            <TextBlock x:Name="TxtProjectInfo"
+                                       Margin="0,8,0,0"
+                                       Foreground="{StaticResource SettingsSubText}"
+                                       TextWrapping="Wrap"/>
+                            <TextBlock x:Name="TxtUpdateStatus"
+                                       Margin="0,8,0,0"
+                                       Foreground="{StaticResource SettingsAccent}"
+                                       TextWrapping="Wrap"/>
+
+                            <WrapPanel Margin="0,12,0,0">
+                                <Button x:Name="BtnCheckUpdate"
+                                        Content="检测更新"
+                                        Width="96"
+                                        Height="38"
+                                        Margin="0,0,10,10"
+                                        Style="{StaticResource SettingsRoundButtonStyle}"
+                                        Click="BtnCheckUpdate_Click"/>
+                                <Button Content="项目主页"
+                                        Width="96"
+                                        Height="38"
+                                        Margin="0,0,10,10"
+                                        Style="{StaticResource SettingsRoundButtonStyle}"
+                                        Click="BtnOpenProjectHome_Click"/>
+                                <Button Content="使用条款"
+                                        Width="96"
+                                        Height="38"
+                                        Margin="0,0,10,10"
+                                        Style="{StaticResource SettingsRoundButtonStyle}"
+                                        Click="BtnTerms_Click"/>
+                                <Button Content="隐私说明"
+                                        Width="96"
+                                        Height="38"
+                                        Margin="0,0,10,10"
+                                        Style="{StaticResource SettingsRoundButtonStyle}"
+                                        Click="BtnPrivacy_Click"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Row="2" Margin="0,12,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="1"
+                        Content="恢复默认"
+                        Width="100"
+                        Height="40"
+                        Margin="12,0,0,0"
+                        Style="{StaticResource SettingsRoundButtonStyle}"
+                        Click="BtnResetDefaults_Click"/>
+                <Button Grid.Column="2"
+                        Content="关闭"
+                        Width="100"
+                        Height="40"
+                        Margin="10,0,0,0"
+                        Style="{StaticResource SettingsRoundButtonStyle}"
+                        Click="BtnClose_Click"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

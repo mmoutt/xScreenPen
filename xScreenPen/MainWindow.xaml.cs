@@ -1,10 +1,12 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using xScreenPen.Models;
+using xScreenPen.Services;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
@@ -17,77 +19,88 @@ namespace xScreenPen
         private bool _isErasing = false;
         private bool _isMouseMode = false;
         private Forms.NotifyIcon _notifyIcon;
+        private readonly SettingsService _settingsService;
+        private PenSettings _settings;
+        private SettingsWindow _settingsWindow;
+        private bool _isApplyingSettings;
+        private bool _isToolbarVisibilityAnimating;
+        private ScaleTransform _floatingToolbarScale;
+        private TrayMenu _trayMenu;
+        private DateTime _lastTrayMenuClosedAtUtc = DateTime.MinValue;
+        private static readonly TimeSpan TrayMenuReopenGuard = TimeSpan.FromMilliseconds(300);
+        private bool _isToolbarVisibleState = true;
         
         // Drag support (Ink-Canvas pattern)
         private bool _isDragging = false;
         private Point _dragStartPoint;
         private Point _mouseDownPoint;
-        private const double ClickThreshold = 5.0; // 点击判定阈值（像素）
-        private int? _activeTouchId = null; // 当前活动的触控ID
+        private const double ClickThreshold = 5.0; // 鐐瑰嚮鍒ゅ畾闃堝€硷紙鍍忕礌锛?
+        private int? _activeTouchId = null; // 褰撳墠娲诲姩鐨勮Е鎺D
 
         public MainWindow()
         {
             InitializeComponent();
-            _currentColorButton = BtnColorWhite; // 默认白色
+            _settingsService = new SettingsService();
+            _settings = _settingsService.Load();
+
+            _currentColorButton = BtnColorWhite;
+            _currentSizeButton = BtnSizeMedium;
             UpdateColorSelection();
+            UpdateSizeSelection();
             InitializeNotifyIcon();
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            // 默认收起悬浮球
-            ToolbarContent.Visibility = Visibility.Collapsed;
-            _isToolbarExpanded = false;
-            UpdateFloatingBallIcon();
-
-            // 默认进入鼠标模式
-            _isMouseMode = true; 
-            _isErasing = false;
-            MainGrid.Background = Brushes.Transparent;
-            inkCanvas.IsHitTestVisible = false;
-            inkCanvas.Visibility = Visibility.Visible;
-            UpdateToolButtonStates();
-            
-            // 移除启动提示
-            // ShowToolIndicator("xScreenPen 已启动");
-            
-            // 初始化粗细选中状态
-            _currentSizeButton = BtnSizeMedium;
-            UpdateSizeSelection();
+            ApplySettings(_settings, false);
         }
 
         protected override void OnClosed(EventArgs e)
         {
+            _trayMenu?.Close();
+            _settingsWindow?.Close();
             _notifyIcon?.Dispose();
             base.OnClosed(e);
         }
 
-        private void Window_KeyDown(object sender, KeyEventArgs e)
-        {
-            switch (e.Key)
-            {
-                case Key.P:
-                    BtnPen_Click(null, null); // 与点击笔按钮行为一致
-                    break;
-                case Key.E:
-                    BtnEraser_Click(null, null);
-                    break;
-                case Key.C:
-                    BtnClear_Click(null, null);
-                    break;
-                case Key.M:
-                    BtnToggle_Click(null, null);
-                    break;
-            }
-        }
-
         #region System Tray
 
-        public bool IsToolbarVisible => FloatingToolbar.Visibility == Visibility.Visible;
+        public bool IsToolbarVisible => _isToolbarVisibleState;
 
         public void ToggleToolbarVisibilityPublic()
         {
             Dispatcher.Invoke(() => ToggleToolbarVisibility());
+        }
+
+        public void SetToolbarVisibilityPublic(bool isVisible)
+        {
+            Dispatcher.Invoke(() => SetToolbarVisibility(isVisible, true, true));
+        }
+
+        public void OpenSettingsWindow()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (_settingsWindow != null)
+                {
+                    if (_settingsWindow.IsVisible)
+                    {
+                        _settingsWindow.Activate();
+                        return;
+                    }
+
+                    _settingsWindow = null;
+                }
+
+                _settingsWindow = new SettingsWindow(GetCurrentSettingsSnapshot(), updated => ApplySettings(updated, true))
+                {
+                    Owner = this
+                };
+
+                _settingsWindow.Closed += (s, e) => _settingsWindow = null;
+                _settingsWindow.Show();
+                _settingsWindow.Activate();
+            });
         }
 
         private void InitializeNotifyIcon()
@@ -97,8 +110,7 @@ namespace xScreenPen
             _notifyIcon.Icon = CreateTrayIcon();
             _notifyIcon.Visible = true;
             
-            // 左右键都能触发菜单
-            _notifyIcon.MouseClick += (s, e) => 
+            _notifyIcon.MouseClick += (s, e) =>
             {
                 if (e.Button == Forms.MouseButtons.Left || e.Button == Forms.MouseButtons.Right)
                 {
@@ -109,22 +121,37 @@ namespace xScreenPen
 
         private void ShowTrayMenu()
         {
-            // 关闭所有已存在的 TrayMenu (如果有)
-            foreach (Window win in Application.Current.Windows)
+            if (_trayMenu != null)
             {
-                if (win is TrayMenu)
+                if (_trayMenu.IsVisible)
                 {
-                    win.Close();
-                    return; // 如果已经打开，再次点击则是关闭
+                    _trayMenu.Close();
+                    return;
                 }
+
+                _trayMenu = null;
+            }
+
+            if (DateTime.UtcNow - _lastTrayMenuClosedAtUtc < TrayMenuReopenGuard)
+            {
+                return;
             }
 
             var menu = new TrayMenu();
+            _trayMenu = menu;
+            menu.Closed += (s, e) =>
+            {
+                _lastTrayMenuClosedAtUtc = DateTime.UtcNow;
+                if (ReferenceEquals(_trayMenu, menu))
+                {
+                    _trayMenu = null;
+                }
+            };
             
-            // 计算位置 (DPI 感知)
+            // 璁＄畻浣嶇疆 (DPI 鎰熺煡)
             var mousePos = GetMousePositionWPF();
             
-            // 默认显示在鼠标上方居中
+            // 榛樿鏄剧ず鍦ㄩ紶鏍囦笂鏂瑰眳涓?
             // TrayMenu Width=200, Height=160
             double menuWidth = 200;
             double menuHeight = 160;
@@ -132,7 +159,7 @@ namespace xScreenPen
             double left = mousePos.X - menuWidth / 2;
             double top = mousePos.Y - menuHeight - 10;
             
-            // 简单边界检查
+            // 绠€鍗曡竟鐣屾鏌?
             if (top < 0) top = mousePos.Y + 10;
             
             menu.Left = left;
@@ -184,13 +211,106 @@ namespace xScreenPen
 
         private void ToggleToolbarVisibility()
         {
-            if (FloatingToolbar.Visibility == Visibility.Visible)
+            SetToolbarVisibility(FloatingToolbar.Visibility != Visibility.Visible, true, true);
+        }
+
+        private void SetToolbarVisibility(bool isVisible, bool animated, bool persist)
+        {
+            _isToolbarVisibleState = isVisible;
+            EnsureFloatingToolbarScaleTransform();
+
+            if (_isToolbarVisibilityAnimating)
             {
-                FloatingToolbar.Visibility = Visibility.Collapsed;
+                FloatingToolbar.BeginAnimation(OpacityProperty, null);
+                _floatingToolbarScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                _floatingToolbarScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                _isToolbarVisibilityAnimating = false;
+            }
+
+            if (!animated)
+            {
+                FloatingToolbar.BeginAnimation(OpacityProperty, null);
+                _floatingToolbarScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                _floatingToolbarScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                FloatingToolbar.Opacity = 1;
+                _floatingToolbarScale.ScaleX = 1;
+                _floatingToolbarScale.ScaleY = 1;
+                FloatingToolbar.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+
+                if (persist)
+                {
+                    PersistCurrentSettings();
+                }
+
+                return;
+            }
+
+            _isToolbarVisibilityAnimating = true;
+
+            var duration = TimeSpan.FromMilliseconds(180);
+            var easing = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+
+            if (isVisible)
+            {
+                FloatingToolbar.Visibility = Visibility.Visible;
+                FloatingToolbar.Opacity = 0;
+                _floatingToolbarScale.ScaleX = 0.92;
+                _floatingToolbarScale.ScaleY = 0.92;
+
+                var opacityAnim = new DoubleAnimation(0, 1, duration) { EasingFunction = easing };
+                opacityAnim.Completed += (s, e) =>
+                {
+                    _isToolbarVisibilityAnimating = false;
+                    if (persist)
+                    {
+                        PersistCurrentSettings();
+                    }
+                };
+
+                var scaleXAnim = new DoubleAnimation(0.92, 1, duration) { EasingFunction = easing };
+                var scaleYAnim = new DoubleAnimation(0.92, 1, duration) { EasingFunction = easing };
+
+                FloatingToolbar.BeginAnimation(OpacityProperty, opacityAnim);
+                _floatingToolbarScale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleXAnim);
+                _floatingToolbarScale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleYAnim);
             }
             else
             {
-                FloatingToolbar.Visibility = Visibility.Visible;
+                var opacityAnim = new DoubleAnimation(1, 0, duration) { EasingFunction = easing };
+                opacityAnim.Completed += (s, e) =>
+                {
+                    FloatingToolbar.Visibility = Visibility.Collapsed;
+                    FloatingToolbar.Opacity = 1;
+                    _floatingToolbarScale.ScaleX = 1;
+                    _floatingToolbarScale.ScaleY = 1;
+                    _isToolbarVisibilityAnimating = false;
+
+                    if (persist)
+                    {
+                        PersistCurrentSettings();
+                    }
+                };
+
+                var scaleXAnim = new DoubleAnimation(1, 0.92, duration) { EasingFunction = easing };
+                var scaleYAnim = new DoubleAnimation(1, 0.92, duration) { EasingFunction = easing };
+
+                FloatingToolbar.BeginAnimation(OpacityProperty, opacityAnim);
+                _floatingToolbarScale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleXAnim);
+                _floatingToolbarScale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleYAnim);
+            }
+        }
+
+        private void EnsureFloatingToolbarScaleTransform()
+        {
+            if (FloatingToolbar.RenderTransform is ScaleTransform scale)
+            {
+                _floatingToolbarScale = scale;
+            }
+            else
+            {
+                _floatingToolbarScale = new ScaleTransform(1, 1);
+                FloatingToolbar.RenderTransform = _floatingToolbarScale;
+                FloatingToolbar.RenderTransformOrigin = new Point(0.5, 0.5);
             }
         }
 
@@ -199,7 +319,7 @@ namespace xScreenPen
         #region Floating Ball (Drag & Click) - Ink-Canvas Pattern
 
         /// <summary>
-        /// 判断是否为点击（移动距离小于阈值）
+        /// 鍒ゆ柇鏄惁涓虹偣鍑伙紙绉诲姩璺濈灏忎簬闃堝€硷級
         /// </summary>
         private bool IsClick(Point downPoint, Point upPoint)
         {
@@ -208,7 +328,7 @@ namespace xScreenPen
         }
 
         /// <summary>
-        /// 确保工具栏使用左上角对齐（用于拖动）
+        /// 纭繚宸ュ叿鏍忎娇鐢ㄥ乏涓婅瀵归綈锛堢敤浜庢嫋鍔級
         /// </summary>
         private void EnsureToolbarLeftTopAlignment()
         {
@@ -224,7 +344,7 @@ namespace xScreenPen
         }
 
         /// <summary>
-        /// 执行拖动移动
+        /// 鎵ц鎷栧姩绉诲姩
         /// </summary>
         private void PerformDragMove(Point currentPoint)
         {
@@ -237,7 +357,7 @@ namespace xScreenPen
         #region Mouse Events
 
         /// <summary>
-        /// 判断是否为手指触控（而非触控笔）
+        /// 鍒ゆ柇鏄惁涓烘墜鎸囪Е鎺э紙鑰岄潪瑙︽帶绗旓級
         /// </summary>
         private bool IsFingerTouch(StylusDevice stylusDevice)
         {
@@ -246,8 +366,8 @@ namespace xScreenPen
 
         private void FloatingBall_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            // 如果是手指触控触发的鼠标事件，忽略（由 Touch 事件处理）
-            // 触控笔会继续在此处理
+            // 濡傛灉鏄墜鎸囪Е鎺цЕ鍙戠殑榧犳爣浜嬩欢锛屽拷鐣ワ紙鐢?Touch 浜嬩欢澶勭悊锛?
+            // 瑙︽帶绗斾細缁х画鍦ㄦ澶勭悊
             if (IsFingerTouch(e.StylusDevice)) return;
             
             _isDragging = true;
@@ -260,7 +380,7 @@ namespace xScreenPen
 
         private void FloatingBall_MouseUp(object sender, MouseButtonEventArgs e)
         {
-            // 如果是手指触控触发的鼠标事件，忽略
+            // 濡傛灉鏄墜鎸囪Е鎺цЕ鍙戠殑榧犳爣浜嬩欢锛屽拷鐣?
             if (IsFingerTouch(e.StylusDevice)) return;
             
             if (!_isDragging) return;
@@ -276,7 +396,7 @@ namespace xScreenPen
 
         private void GridDrag_MouseMove(object sender, MouseEventArgs e)
         {
-            if (_isDragging && _activeTouchId == null) // 仅鼠标拖动
+            if (_isDragging && _activeTouchId == null) // 浠呴紶鏍囨嫋鍔?
             {
                 PerformDragMove(e.GetPosition(null));
             }
@@ -284,7 +404,7 @@ namespace xScreenPen
 
         private void GridDrag_MouseUp(object sender, MouseButtonEventArgs e)
         {
-            // 如果是手指触控触发的鼠标事件，忽略
+            // 濡傛灉鏄墜鎸囪Е鎺цЕ鍙戠殑榧犳爣浜嬩欢锛屽拷鐣?
             if (IsFingerTouch(e.StylusDevice)) return;
             
             if (!_isDragging) return;
@@ -304,7 +424,7 @@ namespace xScreenPen
 
         private void FloatingBall_TouchDown(object sender, TouchEventArgs e)
         {
-            // 只处理第一个触控点
+            // 鍙鐞嗙涓€涓Е鎺х偣
             if (_activeTouchId != null) return;
             
             _activeTouchId = e.TouchDevice.Id;
@@ -387,21 +507,21 @@ namespace xScreenPen
             var duration = TimeSpan.FromMilliseconds(200);
             var easing = new QuadraticEase { EasingMode = EasingMode.EaseOut };
             
-            // 记录悬浮球当前的绝对位置
+            // 璁板綍鎮诞鐞冨綋鍓嶇殑缁濆浣嶇疆
             Point floatingBallPos = GetFloatingBallAbsolutePosition();
             
-            // 更新悬浮球图标颜色
+            // 鏇存柊鎮诞鐞冨浘鏍囬鑹?
             UpdateFloatingBallIcon();
             
             if (_isToolbarExpanded)
             {
-                // 如果二级面板也需要恢复，先计算好
+                // 濡傛灉浜岀骇闈㈡澘涔熼渶瑕佹仮澶嶏紝鍏堣绠楀ソ
                 ToolbarContent.Visibility = Visibility.Visible;
                 
-                // 强制同步更新布局
+                // 寮哄埗鍚屾鏇存柊甯冨眬
                 FloatingToolbar.UpdateLayout();
                 
-                // 立即恢复悬浮球位置
+                // 绔嬪嵆鎭㈠鎮诞鐞冧綅缃?
                 RestoreFloatingBallPosition(floatingBallPos);
                 
                 var scaleXAnim = new DoubleAnimation(0, 1, duration) { EasingFunction = easing };
@@ -413,7 +533,7 @@ namespace xScreenPen
             }
             else
             {
-                // 如果二级面板展开，先关闭（但先不改变 Visibility，这样位置记录是正确的）
+                // 濡傛灉浜岀骇闈㈡澘灞曞紑锛屽厛鍏抽棴锛堜絾鍏堜笉鏀瑰彉 Visibility锛岃繖鏍蜂綅缃褰曟槸姝ｇ‘鐨勶級
                 bool wasSecondaryPanelExpanded = _isSecondaryPanelExpanded;
                 if (_isSecondaryPanelExpanded)
                 {
@@ -431,20 +551,22 @@ namespace xScreenPen
                         SecondaryPanel.Visibility = Visibility.Collapsed;
                     }
                     
-                    // 强制同步更新布局
+                    // 寮哄埗鍚屾鏇存柊甯冨眬
                     FloatingToolbar.UpdateLayout();
                     
-                    // 立即恢复悬浮球位置
+                    // 绔嬪嵆鎭㈠鎮诞鐞冧綅缃?
                     RestoreFloatingBallPosition(floatingBallPos);
                 };
                 ToolbarContentScale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleXAnim);
                 ToolbarContentScale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleYAnim);
                 ToolbarContent.BeginAnimation(OpacityProperty, opacityAnim);
             }
+
+            PersistCurrentSettings();
         }
         
         /// <summary>
-        /// 更新悬浮球图标颜色：展开时蓝色，收起时白色
+        /// 鏇存柊鎮诞鐞冨浘鏍囬鑹诧細灞曞紑鏃惰摑鑹诧紝鏀惰捣鏃剁櫧鑹?
         /// </summary>
         private void UpdateFloatingBallIcon()
         {
@@ -455,7 +577,7 @@ namespace xScreenPen
         }
         
         /// <summary>
-        /// 获取悬浮球相对于MainGrid的绝对位置
+        /// 鑾峰彇鎮诞鐞冪浉瀵逛簬MainGrid鐨勭粷瀵逛綅缃?
         /// </summary>
         private Point GetFloatingBallAbsolutePosition()
         {
@@ -471,23 +593,23 @@ namespace xScreenPen
         }
         
         /// <summary>
-        /// 恢复悬浮球到指定的绝对位置
+        /// 鎭㈠鎮诞鐞冨埌鎸囧畾鐨勭粷瀵逛綅缃?
         /// </summary>
         private void RestoreFloatingBallPosition(Point targetBallPos)
         {
             if (FloatingToolbar.HorizontalAlignment != HorizontalAlignment.Left)
             {
-                return; // 还没有被拖动过，不需要调整
+                return; // 杩樻病鏈夎鎷栧姩杩囷紝涓嶉渶瑕佽皟鏁?
             }
             
-            // 获取当前悬浮球位置
+            // 鑾峰彇褰撳墠鎮诞鐞冧綅缃?
             Point currentBallPos = GetFloatingBallAbsolutePosition();
             
-            // 计算需要调整的偏移量（同时处理X和Y轴）
+            // 璁＄畻闇€瑕佽皟鏁寸殑鍋忕Щ閲忥紙鍚屾椂澶勭悊X鍜孻杞达級
             double deltaX = targetBallPos.X - currentBallPos.X;
             double deltaY = targetBallPos.Y - currentBallPos.Y;
             
-            // 只有当偏移量大于1像素时才调整
+            // 鍙湁褰撳亸绉婚噺澶т簬1鍍忕礌鏃舵墠璋冩暣
             if (Math.Abs(deltaX) > 1 || Math.Abs(deltaY) > 1)
             {
                 FloatingToolbar.Margin = new Thickness(
@@ -501,97 +623,69 @@ namespace xScreenPen
 
         #region Tool Buttons
 
-        /// <summary>
-        /// 笔按钮点击：
-        /// - 如果当前不是笔模式 → 切换到笔模式（不展开二级菜单）
-        /// - 如果当前是笔模式 → 切换二级菜单的展开/收起状态
-        /// </summary>
         private void BtnPen_Click(object sender, RoutedEventArgs e)
         {
             bool wasPenMode = !_isErasing && !_isMouseMode;
-            
-            // 先退出鼠标模式（如果需要）
-            if (_isMouseMode)
-            {
-                _isMouseMode = false;
-                MainGrid.Background = new SolidColorBrush(Color.FromArgb(0x01, 0xFF, 0xFF, 0xFF));
-                inkCanvas.IsHitTestVisible = true;
-            }
-            
-            // 设置为笔模式
+
             SetPenMode();
-            
-            // 如果之前就是笔模式，切换二级菜单
+
             if (wasPenMode)
             {
                 ToggleSecondaryPanel();
             }
+
+            PersistCurrentSettings();
         }
 
-        /// <summary>
-        /// 展开二级面板（仅展开，不切换）
-        /// </summary>
         private void ShowSecondaryPanel()
         {
-            if (_isSecondaryPanelExpanded) return;
-            
+            if (_isSecondaryPanelExpanded)
+            {
+                return;
+            }
+
             _isSecondaryPanelExpanded = true;
-            
+
             var duration = TimeSpan.FromMilliseconds(200);
             var easing = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-            
-            // 记录展开前的悬浮球位置
+
             Point floatingBallPos = GetFloatingBallAbsolutePosition();
-            
             SecondaryPanel.Visibility = Visibility.Visible;
-            
-            // 强制同步更新布局，此时悬浮球会被会被向下挤
             FloatingToolbar.UpdateLayout();
-            
-            // 立即修正位置（把被挤下去的 Toolbar 提上来）
-            // 这样在下一帧渲染时，用户看到的是原位不动的悬浮球和向上展开的菜单
             RestoreFloatingBallPosition(floatingBallPos);
-            
+
             var scaleYAnim = new DoubleAnimation(0, 1, duration) { EasingFunction = easing };
             var opacityAnim = new DoubleAnimation(0, 1, duration) { EasingFunction = easing };
             SecondaryPanelScale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleYAnim);
             SecondaryPanel.BeginAnimation(OpacityProperty, opacityAnim);
         }
 
-        /// <summary>
-        /// 收起二级面板（仅收起，不切换）
-        /// </summary>
         private void HideSecondaryPanel()
         {
-            if (!_isSecondaryPanelExpanded) return;
-            
+            if (!_isSecondaryPanelExpanded)
+            {
+                return;
+            }
+
             _isSecondaryPanelExpanded = false;
-            
+
             var duration = TimeSpan.FromMilliseconds(200);
             var easing = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-            
-            // 记录动画开始前的悬浮球位置
+
             Point floatingBallPos = GetFloatingBallAbsolutePosition();
-            
+
             var scaleYAnim = new DoubleAnimation(1, 0, duration) { EasingFunction = easing };
             var opacityAnim = new DoubleAnimation(1, 0, duration) { EasingFunction = easing };
             opacityAnim.Completed += (s, ev) =>
             {
                 SecondaryPanel.Visibility = Visibility.Collapsed;
-                
-                // 强制同步更新布局，此时悬浮球会向上跳
                 FloatingToolbar.UpdateLayout();
-                
-                // 立即修正位置（把跳上去的 Toolbar 按下来）
                 RestoreFloatingBallPosition(floatingBallPos);
             };
             SecondaryPanelScale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleYAnim);
             SecondaryPanel.BeginAnimation(OpacityProperty, opacityAnim);
         }
 
-        /// <summary>
-        /// 切换二级面板的展开/收起状态
-        /// </summary>
         private void ToggleSecondaryPanel()
         {
             if (_isSecondaryPanelExpanded)
@@ -604,68 +698,76 @@ namespace xScreenPen
             }
         }
 
-        /// <summary>
-        /// 橡皮擦按钮点击：切换到橡皮擦模式，关闭二级菜单
-        /// </summary>
         private void BtnEraser_Click(object sender, RoutedEventArgs e)
         {
-            // 退出鼠标模式
-            if (_isMouseMode)
-            {
-                _isMouseMode = false;
-                MainGrid.Background = new SolidColorBrush(Color.FromArgb(0x01, 0xFF, 0xFF, 0xFF));
-                inkCanvas.IsHitTestVisible = true;
-            }
-            
-            // 关闭二级面板
             HideSecondaryPanel();
-            
             SetEraserMode();
+            PersistCurrentSettings();
         }
 
-        /// <summary>
-        /// 设置为笔模式
-        /// </summary>
         private void SetPenMode()
         {
-            _isErasing = false;
-            inkCanvas.EditingMode = InkCanvasEditingMode.Ink;
-            inkCanvas.Cursor = Cursors.Pen;
-            UpdateToolButtonStates();
+            SetToolMode(ToolMode.Pen);
         }
 
-        /// <summary>
-        /// 设置为橡皮擦模式
-        /// </summary>
         private void SetEraserMode()
         {
-            _isErasing = true;
-            inkCanvas.EditingMode = InkCanvasEditingMode.EraseByStroke;
-            inkCanvas.Cursor = Cursors.Cross;
+            SetToolMode(ToolMode.Eraser);
+        }
+
+        private void SetMouseMode()
+        {
+            SetToolMode(ToolMode.Mouse);
+        }
+
+        private void SetToolMode(ToolMode mode)
+        {
+            _isMouseMode = mode == ToolMode.Mouse;
+            _isErasing = mode == ToolMode.Eraser;
+
+            if (_isMouseMode)
+            {
+                MainGrid.Background = Brushes.Transparent;
+                inkCanvas.IsHitTestVisible = false;
+                inkCanvas.Visibility = Visibility.Visible;
+                inkCanvas.Cursor = Cursors.Arrow;
+            }
+            else
+            {
+                MainGrid.Background = new SolidColorBrush(Color.FromArgb(0x01, 0xFF, 0xFF, 0xFF));
+                inkCanvas.IsHitTestVisible = true;
+                inkCanvas.Visibility = Visibility.Visible;
+                inkCanvas.EditingMode = _isErasing ? InkCanvasEditingMode.EraseByStroke : InkCanvasEditingMode.Ink;
+                inkCanvas.Cursor = _isErasing ? Cursors.Cross : Cursors.Pen;
+            }
+
             UpdateToolButtonStates();
         }
 
-        /// <summary>
-        /// 更新所有工具按钮的视觉状态
-        /// 三个工具互斥：鼠标模式、画笔、橡皮擦
-        /// </summary>
+        private ToolMode GetCurrentToolMode()
+        {
+            if (_isMouseMode)
+            {
+                return ToolMode.Mouse;
+            }
+
+            return _isErasing ? ToolMode.Eraser : ToolMode.Pen;
+        }
+
         private void UpdateToolButtonStates()
         {
             var blueColor = Color.FromRgb(0x00, 0xAA, 0xFF);
             var selectedBg = new SolidColorBrush(Color.FromArgb(0x60, 0xFF, 0xFF, 0xFF));
-            
+
             bool isPenSelected = !_isErasing && !_isMouseMode;
             bool isEraserSelected = _isErasing && !_isMouseMode;
-            
-            // 鼠标模式按钮
+
             ToggleIcon.Fill = _isMouseMode ? new SolidColorBrush(blueColor) : Brushes.White;
             BtnToggle.Background = _isMouseMode ? selectedBg : Brushes.Transparent;
-            
-            // 画笔按钮
+
             PenIcon.Fill = isPenSelected ? new SolidColorBrush(blueColor) : Brushes.White;
             BtnPen.Background = isPenSelected ? selectedBg : Brushes.Transparent;
-            
-            // 橡皮擦按钮
+
             EraserIcon.Fill = isEraserSelected ? new SolidColorBrush(blueColor) : Brushes.White;
             BtnEraser.Background = isEraserSelected ? selectedBg : Brushes.Transparent;
         }
@@ -678,17 +780,59 @@ namespace xScreenPen
 
         private void BtnColor_Click(object sender, RoutedEventArgs e)
         {
-             if (sender is Button btn && btn.Tag is string colorString)
+            if (sender is Button btn && btn.Tag is string colorString)
             {
-                var color = (Color)ColorConverter.ConvertFromString(colorString);
-                inkCanvas.DefaultDrawingAttributes.Color = color;
-                _currentColorButton = btn;
-                UpdateColorSelection();
-                
-                if (_isErasing)
-                {
-                    SetPenMode();
-                }
+                SetColorByHex(colorString, true);
+            }
+        }
+
+        private void SetColorByHex(string colorHex, bool persist)
+        {
+            var colorButton = GetColorButtonByHex(colorHex) ?? BtnColorWhite;
+            if (!(colorButton.Tag is string normalizedHex))
+            {
+                return;
+            }
+
+            var color = (Color)ColorConverter.ConvertFromString(normalizedHex);
+            inkCanvas.DefaultDrawingAttributes.Color = color;
+            _currentColorButton = colorButton;
+            UpdateColorSelection();
+
+            if (_isErasing)
+            {
+                SetPenMode();
+            }
+
+            if (persist)
+            {
+                PersistCurrentSettings();
+            }
+        }
+
+        private Button GetColorButtonByHex(string colorHex)
+        {
+            if (string.IsNullOrWhiteSpace(colorHex))
+            {
+                return BtnColorWhite;
+            }
+
+            var normalized = colorHex.Trim().ToUpperInvariant();
+            switch (normalized)
+            {
+                case "#FF000000":
+                    return BtnColorBlack;
+                case "#FFFF0000":
+                    return BtnColorRed;
+                case "#FF0066FF":
+                    return BtnColorBlue;
+                case "#FF00CC00":
+                    return BtnColorGreen;
+                case "#FFFFCC00":
+                    return BtnColorYellow;
+                case "#FFFFFFFF":
+                default:
+                    return BtnColorWhite;
             }
         }
 
@@ -699,20 +843,16 @@ namespace xScreenPen
             {
                 if (btn == _currentColorButton)
                 {
-                    // 选中状态：半透明白色背景 (类似粗细选择)
                     btn.Background = new SolidColorBrush(Color.FromArgb(0x60, 0xFF, 0xFF, 0xFF));
                 }
                 else
                 {
-                    // 未选中：透明背景
                     btn.Background = Brushes.Transparent;
                 }
             }
         }
 
         #endregion
-
-
 
         #region Pen Size
 
@@ -722,17 +862,65 @@ namespace xScreenPen
         {
             if (sender is Button btn && btn.Tag is string sizeStr && double.TryParse(sizeStr, out double size))
             {
-                inkCanvas.DefaultDrawingAttributes.Width = size;
-                inkCanvas.DefaultDrawingAttributes.Height = size;
-                
-                _currentSizeButton = btn;
-                UpdateSizeSelection();
-                
-                if (_isErasing)
+                SetPenSize(size, true);
+            }
+        }
+
+        private void SetPenSize(double size, bool persist)
+        {
+            var sizeButton = GetSizeButtonByValue(size) ?? BtnSizeMedium;
+            if (!(sizeButton.Tag is string sizeTag) || !double.TryParse(sizeTag, out double normalizedSize))
+            {
+                normalizedSize = 4;
+            }
+
+            inkCanvas.DefaultDrawingAttributes.Width = normalizedSize;
+            inkCanvas.DefaultDrawingAttributes.Height = normalizedSize;
+
+            _currentSizeButton = sizeButton;
+            UpdateSizeSelection();
+
+            if (_isErasing)
+            {
+                SetPenMode();
+            }
+
+            if (persist)
+            {
+                PersistCurrentSettings();
+            }
+        }
+
+        private Button GetSizeButtonByValue(double size)
+        {
+            var candidates = new[] { BtnSizeSmall, BtnSizeMedium, BtnSizeLarge };
+            Button nearest = BtnSizeMedium;
+            double minDistance = double.MaxValue;
+
+            foreach (var candidate in candidates)
+            {
+                if (candidate.Tag is string sizeTag && double.TryParse(sizeTag, out double candidateSize))
                 {
-                    SetPenMode();
+                    var distance = Math.Abs(candidateSize - size);
+                    if (distance < minDistance)
+                    {
+                        minDistance = distance;
+                        nearest = candidate;
+                    }
                 }
             }
+
+            return nearest;
+        }
+
+        private double GetCurrentPenSize()
+        {
+            if (_currentSizeButton?.Tag is string sizeTag && double.TryParse(sizeTag, out double size))
+            {
+                return size;
+            }
+
+            return 4;
         }
 
         private void UpdateSizeSelection()
@@ -744,12 +932,18 @@ namespace xScreenPen
                 if (btn == _currentSizeButton)
                 {
                     btn.Background = new SolidColorBrush(Color.FromArgb(0x60, 0xFF, 0xFF, 0xFF));
-                    if (ellipse != null) ellipse.Fill = new SolidColorBrush(Color.FromRgb(0x00, 0xAA, 0xFF));
+                    if (ellipse != null)
+                    {
+                        ellipse.Fill = new SolidColorBrush(Color.FromRgb(0x00, 0xAA, 0xFF));
+                    }
                 }
                 else
                 {
                     btn.Background = Brushes.Transparent;
-                    if (ellipse != null) ellipse.Fill = Brushes.White;
+                    if (ellipse != null)
+                    {
+                        ellipse.Fill = Brushes.White;
+                    }
                 }
             }
         }
@@ -766,31 +960,117 @@ namespace xScreenPen
             }
         }
 
-        /// <summary>
-        /// 鼠标模式按钮点击：进入鼠标模式
-        /// 如果已经是鼠标模式则不做任何操作
-        /// </summary>
         private void BtnToggle_Click(object sender, RoutedEventArgs e)
         {
-            // 如果已经是鼠标模式，不做任何操作
-            if (_isMouseMode) return;
-            
-            _isMouseMode = true;
-            _isErasing = false;
-            
-            // 关闭二级面板
+            if (_isMouseMode)
+            {
+                return;
+            }
+
             HideSecondaryPanel();
-            
-            MainGrid.Background = Brushes.Transparent;
-            inkCanvas.IsHitTestVisible = false;
-            inkCanvas.Visibility = Visibility.Visible;
-            
-            UpdateToolButtonStates();
+            SetMouseMode();
+            PersistCurrentSettings();
+        }
+
+        #endregion
+
+        #region Settings
+
+        internal void ApplySettings(PenSettings settings, bool save)
+        {
+            var sanitized = _settingsService.Sanitize(settings);
+
+            _isApplyingSettings = true;
+            try
+            {
+                SetColorByHex(sanitized.DefaultColorHex, false);
+                SetPenSize(sanitized.DefaultPenSize, false);
+
+                switch (sanitized.StartupToolMode)
+                {
+                    case ToolMode.Eraser:
+                        SetEraserMode();
+                        break;
+                    case ToolMode.Pen:
+                        SetPenMode();
+                        break;
+                    default:
+                        SetMouseMode();
+                        break;
+                }
+
+                ApplyToolbarExpandedState(sanitized.IsToolbarExpanded);
+                ApplyToolbarVisibleState(sanitized.IsToolbarVisible);
+
+                _settings = sanitized.Clone();
+            }
+            finally
+            {
+                _isApplyingSettings = false;
+            }
+
+            if (save)
+            {
+                PersistCurrentSettings();
+            }
+        }
+
+        internal PenSettings GetCurrentSettingsSnapshot()
+        {
+            var snapshot = new PenSettings
+            {
+                SchemaVersion = PenSettings.CurrentSchemaVersion,
+                DefaultColorHex = (_currentColorButton?.Tag as string) ?? "#FFFFFFFF",
+                DefaultPenSize = GetCurrentPenSize(),
+                StartupToolMode = GetCurrentToolMode(),
+                IsToolbarVisible = FloatingToolbar.Visibility == Visibility.Visible,
+                IsToolbarExpanded = _isToolbarExpanded
+            };
+
+            return _settingsService.Sanitize(snapshot);
+        }
+
+        internal void PersistCurrentSettings()
+        {
+            if (_isApplyingSettings)
+            {
+                return;
+            }
+
+            _settings = GetCurrentSettingsSnapshot();
+            _settingsService.Save(_settings);
+        }
+
+        private void ApplyToolbarExpandedState(bool isExpanded)
+        {
+            _isToolbarExpanded = isExpanded;
+
+            ToolbarContent.BeginAnimation(OpacityProperty, null);
+            ToolbarContentScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            ToolbarContentScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            ToolbarContentScale.ScaleX = 1;
+            ToolbarContentScale.ScaleY = 1;
+            ToolbarContent.Opacity = isExpanded ? 1 : 0;
+            ToolbarContent.Visibility = isExpanded ? Visibility.Visible : Visibility.Collapsed;
+
+            _isSecondaryPanelExpanded = false;
+            SecondaryPanel.BeginAnimation(OpacityProperty, null);
+            SecondaryPanelScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            SecondaryPanelScale.ScaleY = 1;
+            SecondaryPanel.Opacity = 0;
+            SecondaryPanel.Visibility = Visibility.Collapsed;
+
+            UpdateFloatingBallIcon();
+        }
+
+        private void ApplyToolbarVisibleState(bool isVisible)
+        {
+            _isToolbarVisibleState = isVisible;
+            SetToolbarVisibility(isVisible, false, false);
         }
 
         #endregion
 
     }
-
-
 }
+
